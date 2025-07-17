@@ -1,8 +1,7 @@
-' Constantes del sistema
 Const MAX_TOKENS:Int = 1024 ' 50257
-Const EMBEDDING_SIZE:Int = 1024 ' 1024
+Const EMBEDDING_SIZE:Int = 512 ' 1024
 Const MAX_CONTEXT:Int = 256 ' 2048
-Const LEARNING_RATE:Float = 0.0001
+Const LEARNING_RATE:Float = 0.01 ' 0.0001
 Const MAX_RESPONSE_LENGTH:Int = 100 ' 500
 Const IS_LEARNING:Int = 1
 Const TEMPERATURE:Float = 0.7
@@ -23,10 +22,10 @@ Const TK_NEWLINE:Int = 5
 Const TK_PAD:Int = 6
 ' Configuración de contexto/historial
 Const USAR_HISTORIAL:Int = False ' True para activar memoria de conversación
-Const MAX_HISTORIAL:Int = 3      ' Máximo mensajes a recordar
+Const MAX_HISTORIAL:Int = 3      ' Máximo mensajes a recordar (si USAR_HISTORIAL=True)
 Const LIMPIAR_CONTEXTO_ENTRE_PROMTPS:Int = True ' Para pruebas iniciales
 ' Constantes de logging
-Const LOG_ACTIVADO:Int = False
+Const LOG_ACTIVADO:Int = False ' Cambiar a False para desactivar logs
 Const LOG_TO_FILE:Int = True ' Guardar logs en archivo
 Const LOG_FILE:String = "llm_debug.log" ' Nombre del archivo de log
 Const LOG_TOKENIZACION:Int = True
@@ -768,74 +767,89 @@ End Method
         learningEnabled = enableFlag
     End Method
 
-Method Tokenizar:String[](textoEntradaUsuario:String)
-    Local caracteresEspecialesUnicos:String = Chr(33)+Chr(34)+Chr(35)+Chr(36)+Chr(37)+Chr(38)+Chr(39)+Chr(40)+Chr(41)+Chr(42)+Chr(43)+Chr(44)+Chr(45)+Chr(46)+Chr(47)+Chr(58)+Chr(59)+Chr(60)+Chr(61)+Chr(62)+Chr(63)+Chr(64)+Chr(91)+Chr(92)+Chr(93)+Chr(94)+Chr(95)+Chr(96)+Chr(123)+Chr(124)+Chr(125)+Chr(126)
+Method Tokenizar:String[](tkz_textoEntrada:String)
+    ' Caracteres especiales definidos con Chr()
+    Local tkz_especiales:String = Chr(33) + Chr(34) + Chr(35) + Chr(36) + Chr(37) + Chr(38) + Chr(39) + ..
+                                 Chr(40) + Chr(41) + Chr(42) + Chr(43) + Chr(44) + Chr(45) + Chr(46) + ..
+                                 Chr(47) + Chr(58) + Chr(59) + Chr(60) + Chr(61) + Chr(62) + Chr(63) + ..
+                                 Chr(64) + Chr(91) + Chr(92) + Chr(93) + Chr(94) + Chr(95) + Chr(96) + ..
+                                 Chr(123) + Chr(124) + Chr(125) + Chr(126)
     
-    Local listaTokensFinalesUnicos:TList = CreateList()
-    Local bufferActualUnico:String = ""
-    Local estadoPalabraUnico:Int = False
-    Local estadoNumeroUnico:Int = False
-    Local posicionCaracterActualUnico:Int = 0
+    Local tkz_resultado:TList = CreateList()
+    Local tkz_bufferActual:String = ""
+    Local tkz_estadoPalabra:Int = False
+    Local tkz_estadoNumero:Int = False
+    Local tkz_posicion:Int = 0
     
-    While posicionCaracterActualUnico < textoEntradaUsuario.Length
-        Local codigoCaracterActualUnico:Int = textoEntradaUsuario[posicionCaracterActualUnico]
-        Local caracterActualUnico:String = Chr(codigoCaracterActualUnico)
+    While tkz_posicion < tkz_textoEntrada.Length
+        Local tkz_codigo:Int = tkz_textoEntrada[tkz_posicion]
+        Local tkz_caracter:String = Chr(tkz_codigo)
         
-        Local esLetraUnico:Int = (codigoCaracterActualUnico >= 97 And codigoCaracterActualUnico <= 122) Or (codigoCaracterActualUnico >= 65 And codigoCaracterActualUnico <= 90)
-        Local esNumeroUnico:Int = codigoCaracterActualUnico >= 48 And codigoCaracterActualUnico <= 57
-        Local esEspacioUnico:Int = codigoCaracterActualUnico = 32 Or codigoCaracterActualUnico = 9
-        Local esNuevaLineaUnico:Int = codigoCaracterActualUnico = 10
-        Local esEspecialUnico:Int = caracteresEspecialesUnicos.Find(caracterActualUnico) >= 0
+        ' Definición de categorías
+        Local tkz_esLetra:Int = (tkz_codigo >= 97 And tkz_codigo <= 122) Or (tkz_codigo >= 65 And tkz_codigo <= 90)
+        Local tkz_esNumero:Int = tkz_codigo >= 48 And tkz_codigo <= 57
+        Local tkz_esEspacio:Int = tkz_codigo = 32 Or tkz_codigo = 9
+        Local tkz_esNuevaLinea:Int = tkz_codigo = 10
+        Local tkz_esEspecial:Int = tkz_especiales.Find(tkz_caracter) >= 0
+        Local tkz_esApostrofe:Int = tkz_caracter = Chr(39)
+        Local tkz_esGuion:Int = tkz_caracter = Chr(45)
         
-        If esLetraUnico Or (estadoPalabraUnico And (caracterActualUnico = "'" Or caracterActualUnico = "-"))
-            estadoPalabraUnico = True
-            estadoNumeroUnico = False
-            bufferActualUnico :+ caracterActualUnico.ToLower()
-            posicionCaracterActualUnico :+ 1
+        ' Manejo de estados
+        If tkz_estadoPalabra And (tkz_esLetra Or tkz_esApostrofe Or tkz_esGuion)
+            tkz_bufferActual :+ tkz_caracter.ToLower()
+            tkz_posicion :+ 1
             Continue
-        ElseIf esNumeroUnico Or (estadoNumeroUnico And (caracterActualUnico = "." Or caracterActualUnico = ","))
-            estadoNumeroUnico = True
-            estadoPalabraUnico = False
-            bufferActualUnico :+ caracterActualUnico
-            posicionCaracterActualUnico :+ 1
+        ElseIf tkz_estadoNumero And (tkz_esNumero Or tkz_caracter = Chr(46) Or tkz_caracter = Chr(44))
+            tkz_bufferActual :+ tkz_caracter
+            tkz_posicion :+ 1
             Continue
         EndIf
         
-        If bufferActualUnico.Length > 0
-            ListAddLast(listaTokensFinalesUnicos, bufferActualUnico)
-            bufferActualUnico = ""
-            estadoPalabraUnico = False
-            estadoNumeroUnico = False
+        ' Flush buffer si hay contenido
+        If tkz_bufferActual.Length > 0
+            ListAddLast(tkz_resultado, tkz_bufferActual)
+            tkz_bufferActual = ""
+            tkz_estadoPalabra = False
+            tkz_estadoNumero = False
         EndIf
         
-        If esEspacioUnico
-            ListAddLast(listaTokensFinalesUnicos, " ")
-            posicionCaracterActualUnico :+ 1
-        ElseIf esNuevaLineaUnico
-            ListAddLast(listaTokensFinalesUnicos, "~n")
-            posicionCaracterActualUnico :+ 1
-        ElseIf esEspecialUnico
-            ListAddLast(listaTokensFinalesUnicos, caracterActualUnico)
-            posicionCaracterActualUnico :+ 1
-        Else
-            posicionCaracterActualUnico :+ 1
+        ' Manejo de caracteres individuales
+        If tkz_esLetra
+            tkz_estadoPalabra = True
+            tkz_bufferActual :+ tkz_caracter.ToLower()
+        ElseIf tkz_esNumero
+            tkz_estadoNumero = True
+            tkz_bufferActual :+ tkz_caracter
+        ElseIf tkz_esEspacio
+            ListAddLast(tkz_resultado, " ")
+        ElseIf tkz_esNuevaLinea
+            ListAddLast(tkz_resultado, "~n")
+        ElseIf tkz_esEspecial
+            ListAddLast(tkz_resultado, tkz_caracter)
+        ElseIf tkz_codigo > 127 ' Caracteres Unicode
+            ListAddLast(tkz_resultado, tkz_caracter)
         EndIf
+        
+        tkz_posicion :+ 1
     Wend
     
-    If bufferActualUnico.Length > 0
-        ListAddLast(listaTokensFinalesUnicos, bufferActualUnico)
+    ' Asegurar que el buffer final se vacíe
+    If tkz_bufferActual.Length > 0
+        ListAddLast(tkz_resultado, tkz_bufferActual)
     EndIf
     
-    Local resultadoFinalUnico:String[] = New String[listaTokensFinalesUnicos.Count()]
-    Local indiceResultadoUnico:Int = 0
-    For tokenUnico:String = EachIn listaTokensFinalesUnicos
-        If tokenUnico.Trim() <> ""
-            resultadoFinalUnico[indiceResultadoUnico] = tokenUnico
-            indiceResultadoUnico :+ 1
+    ' Convertir lista a array y limpiar tokens vacíos
+    Local tkz_arrayResultado:String[] = New String[tkz_resultado.Count()]
+    Local tkz_indice:Int = 0
+    
+    For tkz_token:String = EachIn tkz_resultado
+        If tkz_token.Trim() <> ""
+            tkz_arrayResultado[tkz_indice] = tkz_token
+            tkz_indice :+ 1
         EndIf
     Next
     
-    Return resultadoFinalUnico[..indiceResultadoUnico]
+    Return tkz_arrayResultado[..tkz_indice]
 End Method
 
     Method ObtenerOCrearID:Int(tokenStr:String)
@@ -1036,6 +1050,10 @@ End Method
     End Method
     
     Method EntrenarLLM:Int(preguntaStr:String, respuestaStr:String, verboseFlag:Int = False)
+Rem
+        preguntaStr = "User: "+preguntaStr
+        respuestaStr = "AI: "+respuestaStr
+EndRem
         Try
             If preguntaStr.Trim().Length = 0 Or respuestaStr.Trim().Length = 0
                 If verboseFlag Then Print "Error: Pregunta o respuesta vacía"
@@ -1088,6 +1106,103 @@ End Method
             Return False
         End Try
     End Method
+    Rem
+    Method GenerarRespuesta:String(inputStr:String)
+        AddToHistory(inputStr, True)
+        
+        Local histCountVal:Int = Min(conversationHistory.Length, 6)
+        Local recentContextArr:String[histCountVal]
+        For histPosVal3:Int = 0 Until histCountVal
+            recentContextArr[histPosVal3] = conversationHistory[conversationHistory.Length - histCountVal + histPosVal3]
+        Next
+        
+        Local processedTokensArr:String[] = Tokenizar(" ".Join(recentContextArr))
+        ' Print "LOL: "+" ".Join(recentContextArr)
+        Local tokenIDsArr:Int[processedTokensArr.Length]
+        
+        For tokenPosVal5:Int = 0 Until processedTokensArr.Length
+            tokenIDsArr[tokenPosVal5] = ObtenerOCrearID(processedTokensArr[tokenPosVal5])
+        Next
+        
+        Local contextVectorArr:Float[] = ProcesarEntrada(tokenIDsArr)
+        
+        Local generatedTextStr:String
+        Local currentTokenVal:Int = TK_RES
+        Local generatedCountVal:Int = 0
+        Local recentTokensArr:Int[] = [0, 0, 0]
+        
+        While generatedCountVal < MAX_RESPONSE_LENGTH
+            Local tokenScoresArr:Float[MAX_TOKENS]
+            Local totalScoreVal2:Float = 0
+            Local bestTokenVal:Int = -1
+            Local highestScoreVal:Float = -1
+            
+            For tkIDVal:Int = 0 Until MAX_TOKENS
+                If tokenDB[tkIDVal] And tkIDVal <> currentTokenVal
+                    Local penaltyVal:Float = 1.0
+                    For bufIdxVal:Int = 0 Until recentTokensArr.Length
+                        If recentTokensArr[bufIdxVal] = tkIDVal Then penaltyVal = 0.3
+                    Next
+                    
+                    tokenScoresArr[tkIDVal] = 0
+                    For embPosVal15:Int = 0 Until EMBEDDING_SIZE
+                        tokenScoresArr[tkIDVal] :+ embeddingWeights[currentTokenVal * EMBEDDING_SIZE + embPosVal15] * embeddingWeights[tkIDVal * EMBEDDING_SIZE + embPosVal15]
+                    Next
+                    
+                    tokenScoresArr[tkIDVal] :* (1.0 + 0.1 * Log(tokenCounts[tkIDVal]+10)) * penaltyVal
+                    
+                    For ctxIdxVal:Int = 0 Until EMBEDDING_SIZE
+                        tokenScoresArr[tkIDVal] :+ 0.5 * contextVectorArr[ctxIdxVal] * embeddingWeights[tkIDVal * EMBEDDING_SIZE + ctxIdxVal]
+                    Next
+                    
+                    tokenScoresArr[tkIDVal] = Exp(tokenScoresArr[tkIDVal]/temperature)
+                    totalScoreVal2 :+ tokenScoresArr[tkIDVal]
+                    
+                    If tokenScoresArr[tkIDVal] > highestScoreVal
+                        highestScoreVal = tokenScoresArr[tkIDVal]
+                        bestTokenVal = tkIDVal
+                    EndIf
+                EndIf
+            Next
+            
+            If bestTokenVal = -1 Then Exit
+            
+            Local selectedTokenVal:Int = bestTokenVal
+            If temperature > 0.1 And totalScoreVal2 > 0
+                Local randomVal2:Float = Rnd() * totalScoreVal2
+                Local scoreSumVal:Float = 0
+                For tkVal:Int = 0 Until MAX_TOKENS
+                    If tokenScoresArr[tkVal] > 0
+                        scoreSumVal :+ tokenScoresArr[tkVal]
+                        If scoreSumVal >= randomVal2
+                            selectedTokenVal = tkVal
+                            Exit
+                        EndIf
+                    EndIf
+                Next
+            EndIf
+            
+            If selectedTokenVal = TK_END Then Exit
+            
+            For shiftIdxVal:Int = recentTokensArr.Length-1 To 1 Step -1
+                recentTokensArr[shiftIdxVal] = recentTokensArr[shiftIdxVal-1]
+            Next
+            recentTokensArr[0] = selectedTokenVal
+            
+            Local newTokenStr:String = tokenDB[selectedTokenVal]
+            If generatedTextStr.Length > 0 And Not IsPunctuation(newTokenStr) And Not newTokenStr.StartsWith(" ")
+                generatedTextStr :+ " "
+            EndIf
+            generatedTextStr :+ newTokenStr
+            currentTokenVal = selectedTokenVal
+            generatedCountVal :+ 1
+        Wend
+        
+        generatedTextStr = generatedTextStr.Trim()
+        AddToHistory(generatedTextStr, False)
+        Return generatedTextStr
+    End Method
+EndRem
 
 Method GenerarRespuesta:String(inputUsuario:String)
     ' --- Variables Locales Ãšnicas ---
@@ -1119,10 +1234,10 @@ Method GenerarRespuesta:String(inputUsuario:String)
         identificadorTokenSeleccionado = -1
         acumuladorProbabilidadTotal = 0.0
 
-        ' --- CÃ¡lculo de Similitudes ---
+        ' --- Cálculo de Similitudes ---
         For identificadorTokenEvaluado:Int = 0 Until MAX_TOKENS
             If tokenDB[identificadorTokenEvaluado] And tokenDB[identificadorTokenEvaluado] <> ""
-                ' --- CÃ¡lculo de Puntaje Base ---
+                ' --- Cálculo de Puntaje Base ---
                 Local puntajeSimilitudActual:Float = 0.0
                 For dimensionEmbeddingActual:Int = 0 Until EMBEDDING_SIZE
                     puntajeSimilitudActual = puntajeSimilitudActual + vectorContextoActualizadoModelo[dimensionEmbeddingActual] * embeddingWeights[identificadorTokenEvaluado*EMBEDDING_SIZE+dimensionEmbeddingActual]
@@ -1216,6 +1331,7 @@ End Method
         Next
         Return countVal2
     End Method
+
 Method GuardarModelo(archivoStr:String, fullSaveFlag:Int = True)
     Local streamVal:TStream = WriteStream(archivoStr)
     If Not streamVal Then Return
@@ -1241,7 +1357,7 @@ Method GuardarModelo(archivoStr:String, fullSaveFlag:Int = True)
     
     ' Guardar embeddings en binario
     streamVal.WriteLine("EMBEDDINGS")
-    streamVal.WriteLine(EMBEDDING_SIZE) ' Escribir tamaÃ±o del embedding
+    streamVal.WriteLine(EMBEDDING_SIZE) ' Escribir tamaño del embedding
     streamVal.WriteLine(ContarTokensActivos()) ' Escribir cantidad de tokens con embeddings
     
     For tokenIDVal8:Int = 0 Until MAX_TOKENS
@@ -1354,10 +1470,10 @@ Method CargarModelo:Int(archivoStr:String, loadFullFlag:Int = False)
                 Next
                 
             Case "EMBEDDINGS"
-                ' Leer tamaÃ±o del embedding (deberÃ­a coincidir con EMBEDDING_SIZE)
+                ' Leer tamaño del embedding (debería coincidir con EMBEDDING_SIZE)
                 Local embSize:Int = Int(streamVal2.ReadLine())
                 If embSize <> EMBEDDING_SIZE
-                    Print "Advertencia: TamaÃ±o de embedding no coincide (" + embSize + " vs " + EMBEDDING_SIZE + ")"
+                    Print "Advertencia: Tamaño de embedding no coincide (" + embSize + " vs " + EMBEDDING_SIZE + ")"
                 EndIf
                 
                 ' Leer cantidad de tokens con embeddings
