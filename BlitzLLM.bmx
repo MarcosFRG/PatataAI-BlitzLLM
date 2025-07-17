@@ -1,7 +1,8 @@
+' Constantes del sistema
 Const MAX_TOKENS:Int = 1024 ' 50257
 Const EMBEDDING_SIZE:Int = 512 ' 1024
 Const MAX_CONTEXT:Int = 256 ' 2048
-Const LEARNING_RATE:Float = 0.01 ' 0.0001
+Const LEARNING_RATE:Float = 0.01 ' 0.0001 = Modelo grande
 Const MAX_RESPONSE_LENGTH:Int = 100 ' 500
 Const IS_LEARNING:Int = 1
 Const TEMPERATURE:Float = 0.7
@@ -31,7 +32,7 @@ Const LOG_FILE:String = "llm_debug.log" ' Nombre del archivo de log
 Const LOG_TOKENIZACION:Int = True
 Const LOG_GENERACION:Int = True
 Const LOG_ENTRENAMIENTO:Int = True
-Const LOG_PENALIZACIONES:Int = False ' Solo activar para depuraciÃ³n avanzada
+Const LOG_PENALIZACIONES:Int = False ' Solo activar para depuración avanzada
 
 Type TBpePair
     Field left:Int
@@ -921,7 +922,7 @@ Method ProcesarEntrada:Float[](arregloTokens:Int[])
                 representacionToken[dimensionEmbedding] = embeddingWeights[idTokenActual * EMBEDDING_SIZE + dimensionEmbedding]
             Next
             
-            ' Aplicar capas de transformaciÃ³n
+            ' Aplicar capas de transformación
             For indiceCapa:Int = 0 Until NUM_LAYERS
                 representacionToken = transformerBlocks[indiceCapa].Process(representacionToken)
             Next
@@ -936,7 +937,7 @@ Method ProcesarEntrada:Float[](arregloTokens:Int[])
             tokenCounts[idTokenActual] :+ 1
         Next
         
-        ' NormalizaciÃ³n intermedia
+        ' Normalización intermedia
         Local magnitudContexto:Float = 0.0
         For dimensionNormalizacion:Int = 0 Until EMBEDDING_SIZE
             magnitudContexto :+ contextoAcumulado[dimensionNormalizacion] * contextoAcumulado[dimensionNormalizacion]
@@ -959,7 +960,7 @@ Method ProcesarEntrada:Float[](arregloTokens:Int[])
         contextoFinal[dimensionCombinacion] = 0.7 * contextoFinal[dimensionCombinacion] + 0.3 * contextoAcumulado[dimensionCombinacion]
     Next
     
-    ' NormalizaciÃ³n final
+    ' Normalización final
     Local magnitudFinal:Float = 0.0
     For dimensionFinal:Int = 0 Until EMBEDDING_SIZE
         magnitudFinal :+ contextoFinal[dimensionFinal] * contextoFinal[dimensionFinal]
@@ -1050,10 +1051,6 @@ End Method
     End Method
     
     Method EntrenarLLM:Int(preguntaStr:String, respuestaStr:String, verboseFlag:Int = False)
-Rem
-        preguntaStr = "User: "+preguntaStr
-        respuestaStr = "AI: "+respuestaStr
-EndRem
         Try
             If preguntaStr.Trim().Length = 0 Or respuestaStr.Trim().Length = 0
                 If verboseFlag Then Print "Error: Pregunta o respuesta vacía"
@@ -1102,110 +1099,13 @@ EndRem
             Return True
             
         Catch err:Object
-            Print "Error crÃ­tico en EntrenarLLM: " + err.ToString()
+            Print "Error crítico en EntrenarLLM: " + err.ToString()
             Return False
         End Try
     End Method
-    Rem
-    Method GenerarRespuesta:String(inputStr:String)
-        AddToHistory(inputStr, True)
-        
-        Local histCountVal:Int = Min(conversationHistory.Length, 6)
-        Local recentContextArr:String[histCountVal]
-        For histPosVal3:Int = 0 Until histCountVal
-            recentContextArr[histPosVal3] = conversationHistory[conversationHistory.Length - histCountVal + histPosVal3]
-        Next
-        
-        Local processedTokensArr:String[] = Tokenizar(" ".Join(recentContextArr))
-        ' Print "LOL: "+" ".Join(recentContextArr)
-        Local tokenIDsArr:Int[processedTokensArr.Length]
-        
-        For tokenPosVal5:Int = 0 Until processedTokensArr.Length
-            tokenIDsArr[tokenPosVal5] = ObtenerOCrearID(processedTokensArr[tokenPosVal5])
-        Next
-        
-        Local contextVectorArr:Float[] = ProcesarEntrada(tokenIDsArr)
-        
-        Local generatedTextStr:String
-        Local currentTokenVal:Int = TK_RES
-        Local generatedCountVal:Int = 0
-        Local recentTokensArr:Int[] = [0, 0, 0]
-        
-        While generatedCountVal < MAX_RESPONSE_LENGTH
-            Local tokenScoresArr:Float[MAX_TOKENS]
-            Local totalScoreVal2:Float = 0
-            Local bestTokenVal:Int = -1
-            Local highestScoreVal:Float = -1
-            
-            For tkIDVal:Int = 0 Until MAX_TOKENS
-                If tokenDB[tkIDVal] And tkIDVal <> currentTokenVal
-                    Local penaltyVal:Float = 1.0
-                    For bufIdxVal:Int = 0 Until recentTokensArr.Length
-                        If recentTokensArr[bufIdxVal] = tkIDVal Then penaltyVal = 0.3
-                    Next
-                    
-                    tokenScoresArr[tkIDVal] = 0
-                    For embPosVal15:Int = 0 Until EMBEDDING_SIZE
-                        tokenScoresArr[tkIDVal] :+ embeddingWeights[currentTokenVal * EMBEDDING_SIZE + embPosVal15] * embeddingWeights[tkIDVal * EMBEDDING_SIZE + embPosVal15]
-                    Next
-                    
-                    tokenScoresArr[tkIDVal] :* (1.0 + 0.1 * Log(tokenCounts[tkIDVal]+10)) * penaltyVal
-                    
-                    For ctxIdxVal:Int = 0 Until EMBEDDING_SIZE
-                        tokenScoresArr[tkIDVal] :+ 0.5 * contextVectorArr[ctxIdxVal] * embeddingWeights[tkIDVal * EMBEDDING_SIZE + ctxIdxVal]
-                    Next
-                    
-                    tokenScoresArr[tkIDVal] = Exp(tokenScoresArr[tkIDVal]/temperature)
-                    totalScoreVal2 :+ tokenScoresArr[tkIDVal]
-                    
-                    If tokenScoresArr[tkIDVal] > highestScoreVal
-                        highestScoreVal = tokenScoresArr[tkIDVal]
-                        bestTokenVal = tkIDVal
-                    EndIf
-                EndIf
-            Next
-            
-            If bestTokenVal = -1 Then Exit
-            
-            Local selectedTokenVal:Int = bestTokenVal
-            If temperature > 0.1 And totalScoreVal2 > 0
-                Local randomVal2:Float = Rnd() * totalScoreVal2
-                Local scoreSumVal:Float = 0
-                For tkVal:Int = 0 Until MAX_TOKENS
-                    If tokenScoresArr[tkVal] > 0
-                        scoreSumVal :+ tokenScoresArr[tkVal]
-                        If scoreSumVal >= randomVal2
-                            selectedTokenVal = tkVal
-                            Exit
-                        EndIf
-                    EndIf
-                Next
-            EndIf
-            
-            If selectedTokenVal = TK_END Then Exit
-            
-            For shiftIdxVal:Int = recentTokensArr.Length-1 To 1 Step -1
-                recentTokensArr[shiftIdxVal] = recentTokensArr[shiftIdxVal-1]
-            Next
-            recentTokensArr[0] = selectedTokenVal
-            
-            Local newTokenStr:String = tokenDB[selectedTokenVal]
-            If generatedTextStr.Length > 0 And Not IsPunctuation(newTokenStr) And Not newTokenStr.StartsWith(" ")
-                generatedTextStr :+ " "
-            EndIf
-            generatedTextStr :+ newTokenStr
-            currentTokenVal = selectedTokenVal
-            generatedCountVal :+ 1
-        Wend
-        
-        generatedTextStr = generatedTextStr.Trim()
-        AddToHistory(generatedTextStr, False)
-        Return generatedTextStr
-    End Method
-EndRem
 
 Method GenerarRespuesta:String(inputUsuario:String)
-    ' --- Variables Locales Ãšnicas ---
+    ' --- Variables Locales únicas ---
     Local listaTokensInputUsuarioActual:String[] = Tokenizar(inputUsuario)
     Local arregloIdentificadoresTokensUsuario:Int[] = New Int[listaTokensInputUsuarioActual.Length]
     Local vectorContextoActualizadoModelo:Float[] = New Float[EMBEDDING_SIZE]
@@ -1226,9 +1126,9 @@ Method GenerarRespuesta:String(inputUsuario:String)
 
     vectorContextoActualizadoModelo = ProcesarEntrada(arregloIdentificadoresTokensUsuario)
 
-    ' --- Ciclo Principal de GeneraciÃ³n ---
+    ' --- Ciclo Principal de Generación ---
     While banderaGeneracionActiva
-        ' --- ConfiguraciÃ³n de Probabilidades ---
+        ' --- Configuración de Probabilidades ---
         Local arregloDistribucionProbabilidades:Float[MAX_TOKENS]
         puntajeSimilitudMaximaEncontrada = -1.0
         identificadorTokenSeleccionado = -1
@@ -1263,7 +1163,7 @@ Method GenerarRespuesta:String(inputUsuario:String)
             EndIf
         Next
 
-        ' --- SelecciÃ³n del Token ---
+        ' --- Selección del Token ---
         If factorAleatoriedadTemperatura > 0.1 And acumuladorProbabilidadTotal > 0
             Local valorAleatorioSeleccion:Float = Rnd() * acumuladorProbabilidadTotal
             Local acumuladorProbabilidad:Float = 0.0
@@ -1284,20 +1184,20 @@ Method GenerarRespuesta:String(inputUsuario:String)
             Continue
         EndIf
 
-        ' --- ActualizaciÃ³n de Buffer Circular ---
+        ' --- Actualización de Buffer Circular ---
         For posicionRotacionBuffer:Int = bufferCircularTokensRecientes.Length-1 To 1 Step -1
             bufferCircularTokensRecientes[posicionRotacionBuffer] = bufferCircularTokensRecientes[posicionRotacionBuffer-1]
         Next
         bufferCircularTokensRecientes[0] = identificadorTokenSeleccionado
 
-        ' --- ConstrucciÃ³n de Respuesta ---
+        ' --- Construcción de Respuesta ---
         Local textoTokenActual:String = tokenDB[identificadorTokenSeleccionado]
         If cadenaRespuestaGenerada.Length > 0 And Not textoTokenActual.StartsWith(" ") And Not IsPunctuation(textoTokenActual)
             cadenaRespuestaGenerada = cadenaRespuestaGenerada + " "
         EndIf
         cadenaRespuestaGenerada = cadenaRespuestaGenerada + textoTokenActual
 
-        ' --- Condiciones de TerminaciÃ³n ---
+        ' --- Condiciones de Terminación ---
         contadorTotalTokensGenerados = contadorTotalTokensGenerados + 1
         identificadorTokenActualGeneracion = identificadorTokenSeleccionado
 
@@ -1336,7 +1236,7 @@ Method GuardarModelo(archivoStr:String, fullSaveFlag:Int = True)
     Local streamVal:TStream = WriteStream(archivoStr)
     If Not streamVal Then Return
     
-    streamVal.WriteLine("BLLMv1") ' Nueva versiÃ³n con formato binario
+    streamVal.WriteLine("BLLMv1") ' Nueva versión con formato binario
     streamVal.WriteLine(String(learningEnabled))
     streamVal.WriteLine(String(totalInteractions))
     streamVal.WriteLine(Replace(enginePrompt, "~n", "\n"))
@@ -1438,7 +1338,7 @@ Method CargarModelo:Int(archivoStr:String, loadFullFlag:Int = False)
     Local versionStr:String = streamVal2.ReadLine()
     If versionStr <> "BLLMv1"
         streamVal2.Close()
-        Print "Error: VersiÃ³n de archivo no compatible. Esperaba BLLMv1, obtuvo "+versionStr+"."
+        Print "Error: Versión de archivo no compatible. Esperaba BLLMv1, obtuvo "+versionStr+"."
         Return False
     EndIf
     
