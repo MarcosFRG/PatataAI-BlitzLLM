@@ -2,7 +2,7 @@
 Const MAX_TOKENS:Int = 1024 ' 50257
 Const EMBEDDING_SIZE:Int = 512 ' 1024
 Const MAX_CONTEXT:Int = 256 ' 2048
-Const LEARNING_RATE:Float = 0.01 ' 0.0001 = Modelo grande
+Const LEARNING_RATE:Float = 0.01 ' 0.0001
 Const MAX_RESPONSE_LENGTH:Int = 100 ' 500
 Const IS_LEARNING:Int = 1
 Const TEMPERATURE:Float = 0.7
@@ -663,7 +663,7 @@ Method RegistrarLog(mensajeLog:String, tipoLog:String = "INFO")
             archivoLog.WriteLine(lineaCompleta)
             archivoLog.Close()
         Else
-            Print "Error crÃ­tico: No se pudo abrir/escribir en " + LOG_FILE
+            Print "Error crítico: No se pudo abrir/escribir en " + LOG_FILE
         EndIf
     EndIf
 End Method
@@ -767,7 +767,7 @@ End Method
     Method EnableLearning(enableFlag:Int)
         learningEnabled = enableFlag
     End Method
-
+Rem
 Method Tokenizar:String[](tkz_textoEntrada:String)
     ' Caracteres especiales definidos con Chr()
     Local tkz_especiales:String = Chr(33) + Chr(34) + Chr(35) + Chr(36) + Chr(37) + Chr(38) + Chr(39) + ..
@@ -851,6 +851,154 @@ Method Tokenizar:String[](tkz_textoEntrada:String)
     Next
     
     Return tkz_arrayResultado[..tkz_indice]
+End Method
+EndRem
+Method Tokenizar:String[](tkn_textoEntrada:String)
+    ' --- Variables locales con prefijo tkn_ ---
+    Local tkn_caracteresEspeciales:String = Chr(33)+Chr(34)+Chr(35)+Chr(36)+Chr(37)+Chr(38)+Chr(39)+Chr(40)+Chr(41)+..
+        Chr(42)+Chr(43)+Chr(44)+Chr(45)+Chr(46)+Chr(47)+Chr(58)+Chr(59)+Chr(60)+Chr(61)+Chr(62)+Chr(63)+Chr(64)+..
+        Chr(91)+Chr(92)+Chr(93)+Chr(94)+Chr(95)+Chr(96)+Chr(123)+Chr(124)+Chr(125)+Chr(126)
+    
+    ' --- Paso 1: Tokenización inicial ---
+    Local tkn_tokensIniciales:TList = CreateList()
+    Local tkn_bufferActual:String = ""
+    Local tkn_enPalabra:Int = False
+    Local tkn_enNumero:Int = False
+    
+    For tkn_i:Int = 0 Until tkn_textoEntrada.Length
+        Local tkn_c:Int = tkn_textoEntrada[tkn_i]
+        Local tkn_char:String = Chr(tkn_c)
+        
+        ' Categorización
+        Local tkn_esLetra:Int = (tkn_c >= 97 And tkn_c <= 122) Or (tkn_c >= 65 And tkn_c <= 90)
+        Local tkn_esNumero:Int = tkn_c >= 48 And tkn_c <= 57
+        Local tkn_esEspacio:Int = tkn_c = 32 Or tkn_c = 9 Or tkn_c = 10 Or tkn_c = 13
+        Local tkn_esEspecial:Int = tkn_caracteresEspeciales.Find(tkn_char) >= 0
+        Local tkn_esApostrofe:Int = tkn_char = Chr(39)
+        Local tkn_esGuion:Int = tkn_char = Chr(45)
+        
+        ' Manejo de estados
+        If tkn_enPalabra And (tkn_esLetra Or tkn_esApostrofe Or tkn_esGuion)
+            tkn_bufferActual :+ tkn_char.ToLower()
+            Continue
+        ElseIf tkn_enNumero And (tkn_esNumero Or tkn_char = Chr(46) Or tkn_char = Chr(44))
+            tkn_bufferActual :+ tkn_char
+            Continue
+        EndIf
+        
+        ' Flush buffer si hay contenido
+        If tkn_bufferActual.Length > 0
+            ListAddLast(tkn_tokensIniciales, tkn_bufferActual)
+            tkn_bufferActual = ""
+            tkn_enPalabra = False
+            tkn_enNumero = False
+        EndIf
+        
+        ' Manejo de caracteres individuales
+        If tkn_esLetra
+            tkn_enPalabra = True
+            tkn_bufferActual :+ tkn_char.ToLower()
+        ElseIf tkn_esNumero
+            tkn_enNumero = True
+            tkn_bufferActual :+ tkn_char
+        ElseIf tkn_esEspacio
+            ListAddLast(tkn_tokensIniciales, " ")
+        ElseIf tkn_esEspecial
+            ListAddLast(tkn_tokensIniciales, tkn_char)
+        ElseIf tkn_c > 127 ' Caracteres Unicode
+            ListAddLast(tkn_tokensIniciales, tkn_char)
+        EndIf
+    Next
+    
+    ' Asegurar que el buffer final se vacíe
+    If tkn_bufferActual.Length > 0
+        ListAddLast(tkn_tokensIniciales, tkn_bufferActual)
+    EndIf
+    
+    ' --- Paso 2: Convertir a array y aplicar BPE ---
+    Local tkn_tokensArray:String[] = New String[tkn_tokensIniciales.Count()]
+    Local tkn_idx:Int = 0
+    
+    For tkn_token:String = EachIn tkn_tokensIniciales
+        If tkn_token.Trim() <> ""
+            tkn_tokensArray[tkn_idx] = tkn_token
+            tkn_idx :+ 1
+        EndIf
+    Next
+    
+    tkn_tokensArray = tkn_tokensArray[..tkn_idx]
+    
+    ' --- Paso 3: Aplicar BPE dinámico ---
+    Local tkn_resultadoFinal:TList = CreateList()
+    
+    For tkn_tokenActual:String = EachIn tkn_tokensArray
+        If tkn_tokenActual.Length = 1 Or tkn_tokenActual = " " Or tkn_caracteresEspeciales.Find(tkn_tokenActual) >= 0
+            ListAddLast(tkn_resultadoFinal, tkn_tokenActual)
+            Continue
+        EndIf
+        
+        ' Descomponer en caracteres (reemplazo de ToCString)
+        Local tkn_caracteres:String[] = New String[tkn_tokenActual.Length]
+        For tkn_b:Int = 0 Until tkn_tokenActual.Length
+            tkn_caracteres[tkn_b] = Chr(tkn_tokenActual[tkn_b])
+        Next
+        
+        ' Aplicar merges BPE
+        Local tkn_cambios:Int = True
+        While tkn_cambios
+            tkn_cambios = False
+            Local tkn_mejorPar:String = ""
+            Local tkn_mejorFrecuencia:Int = 0
+            Local tkn_mejorPos:Int = -1
+            
+            ' Buscar el par más frecuente
+            For tkn_j:Int = 0 Until tkn_caracteres.Length-1
+                Local tkn_par:String = tkn_caracteres[tkn_j] + tkn_caracteres[tkn_j+1]
+                Local tkn_id:Int = ObtenerOCrearID(tkn_par)
+                If tkn_id <> TK_UNKNOWN And tokenCounts[tkn_id] > tkn_mejorFrecuencia
+                    tkn_mejorFrecuencia = tokenCounts[tkn_id]
+                    tkn_mejorPar = tkn_par
+                    tkn_mejorPos = tkn_j
+                EndIf
+            Next
+            
+            ' Aplicar merge si encontramos un par válido
+            If tkn_mejorPos >= 0
+                ' Reemplazar el par por el token combinado
+                Local tkn_nuevosCaracteres:String[] = New String[tkn_caracteres.Length-1]
+                For tkn_k:Int = 0 Until tkn_mejorPos
+                    tkn_nuevosCaracteres[tkn_k] = tkn_caracteres[tkn_k]
+                Next
+                tkn_nuevosCaracteres[tkn_mejorPos] = tkn_mejorPar
+                For tkn_k:Int = tkn_mejorPos+1 Until tkn_nuevosCaracteres.Length
+                    tkn_nuevosCaracteres[tkn_k] = tkn_caracteres[tkn_k+1]
+                Next
+                
+                tkn_caracteres = tkn_nuevosCaracteres
+                tkn_cambios = True
+                
+                ' Actualizar contador para este par
+                Local tkn_parId:Int = ObtenerOCrearID(tkn_mejorPar)
+                tokenCounts[tkn_parId] :+ 1
+            EndIf
+        Wend
+        
+        ' Agregar subtokens al resultado final
+        For tkn_subtoken:String = EachIn tkn_caracteres
+            ListAddLast(tkn_resultadoFinal, tkn_subtoken)
+        Next
+    Next
+    
+    ' Convertir lista final a array
+    Local tkn_arrayFinal:String[] = New String[tkn_resultadoFinal.Count()]
+    Local tkn_finalIdx:Int = 0
+    
+    For tkn_tokenFinal:String = EachIn tkn_resultadoFinal
+        tkn_arrayFinal[tkn_finalIdx] = tkn_tokenFinal
+        tkn_finalIdx :+ 1
+    Next
+    
+    Return tkn_arrayFinal
 End Method
 
     Method ObtenerOCrearID:Int(tokenStr:String)
